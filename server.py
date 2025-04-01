@@ -112,12 +112,22 @@ def derive_keys(user_id: str, time_slice: str) -> (bytes, bytes):
 
 # Function to encrypt and send the message to all other connected clients
 def broadcast_message(sender_socket, nickname, plaintext):
+    # 1) Build the broadcast text (including nickname)
     full_text = f"[{nickname}] {plaintext.decode(errors='replace')}"
-    # For each client, re-encrypt the broadcast message using that client's derived AES key
+
+    # For each client, re-encrypt the broadcast message using that client's derived AES and HMAC keys
     for (cli_sock, cli_nick, aesgcm, hmac_key) in clients:
         try:
+            # 2) Compute an HMAC for the broadcast text, then append it with the delimiter
+            message_bytes = full_text.encode()
+            digest = hmac.new(hmac_key, message_bytes, hashlib.sha256).digest()
+            broadcast_plain = message_bytes + b'||HMAC||' + digest
+
+            # 3) Encrypt using AES-GCM
             nonce = os.urandom(12)
-            ciphertext = aesgcm.encrypt(nonce, full_text.encode(), None)
+            ciphertext = aesgcm.encrypt(nonce, broadcast_plain, None)
+
+            # 4) Construct the message packet
             packet = (
                 b"MSG"
                 + len(nonce).to_bytes(2, 'big')
@@ -125,7 +135,10 @@ def broadcast_message(sender_socket, nickname, plaintext):
                 + len(ciphertext).to_bytes(4, 'big')
                 + ciphertext
             )
+
+            # 5) Send to each client
             cli_sock.sendall(packet)
+
         except Exception as e:
             print(f"Failed to broadcast to {cli_nick}: {str(e)}")
 
